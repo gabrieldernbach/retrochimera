@@ -186,6 +186,39 @@ def test_canonicalization_pool_is_reused(monkeypatch) -> None:
     assert calls == 1
 
 
+def test_canonicalization_chunksize_preserves_order_and_output() -> None:
+    class RecordingPool:
+        def __init__(self) -> None:
+            self.chunksize = None
+
+        def map(self, function, values, *, chunksize):
+            self.chunksize = chunksize
+            return map(function, values)
+
+    pool = RecordingPool()
+    model: Any = object.__new__(AbstractSmilesTransformerModel)  # type: ignore[type-abstract]
+    model._canonicalization_chunksize = 7
+    model._canonicalization_pool = pool
+    lines = [("C(C)O", 0.1), ("not-a-smiles", 0.2), ("N.CC", 0.3)]
+
+    assert model._canonicalize_predictions(lines) == [
+        ("CCO", "CCO", 0.1),
+        ("", "", 0.2),
+        ("CC.N", "CC", 0.3),
+    ]
+    assert pool.chunksize == 7
+
+
+@pytest.mark.parametrize("chunksize", [0, -1, True, 1.5])
+def test_canonicalization_chunksize_must_be_positive_integer(tmp_path, chunksize) -> None:
+    with pytest.raises(ValueError, match="canonicalization_chunksize"):
+        SmilesTransformerModel(
+            model_dir=tmp_path,
+            device="cpu",
+            canonicalization_chunksize=chunksize,
+        )
+
+
 def _call_together(
     models: list[run_search._BrokeredBackwardReactionModel],
     molecules: list[Molecule],

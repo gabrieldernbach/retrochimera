@@ -68,6 +68,10 @@ Transformer inference automatically uses BF16 on supported CUDA devices, falling
 older CUDA hardware and FP32 on CPU. Set the `inference_precision` model argument to `float32` to
 restore full-precision inference.
 
+Transformer output canonicalization uses a reusable process pool and defaults to chunks of 16
+predictions. Adjust the `canonicalization_chunksize` model argument for substantially different
+batch sizes.
+
 For installation, there are two additional dependency groups: `dev` for running tests, and `graphium` for building the model architecture we used for USPTO-50K; if you care about running the USPTO-50K checkpoint, you need to install via `pip install retrochimera[graphium]`.
 
 If you want to train your own checkpoint, please follow the instructions in [`retrochimera/README.md`](retrochimera/README.md).
