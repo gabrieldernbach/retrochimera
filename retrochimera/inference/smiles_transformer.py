@@ -1,8 +1,8 @@
 import argparse
 import math
-import multiprocessing
 from abc import abstractmethod
-from typing import Any, Generic, Sequence, TypeVar
+from concurrent.futures import Executor
+from typing import Any, Generic, Optional, Sequence, TypeVar
 
 import torch
 from syntheseus import Molecule, Reaction, SingleProductReaction
@@ -12,7 +12,7 @@ from syntheseus.reaction_prediction.utils.inference import (
     get_unique_file_in_dir,
     process_raw_smiles_outputs_backwards,
 )
-from syntheseus.reaction_prediction.utils.misc import suppress_outputs
+from syntheseus.reaction_prediction.utils.misc import cpu_count, suppress_outputs
 
 from retrochimera.models.smiles_transformer import SmilesTransformerModel as TransformerModel
 from retrochimera.opennmt.decode.translator import Translator
@@ -20,6 +20,12 @@ from retrochimera.utils.logging import get_logger
 from retrochimera.utils.root_aligned import clear_map_canonical_smiles, get_product_roots
 
 logger = get_logger(__name__)
+
+
+def _get_reusable_executor(max_workers: int) -> Executor:
+    from joblib.externals.loky import get_reusable_executor
+
+    return get_reusable_executor(max_workers=max_workers, timeout=300)
 
 
 InputType = TypeVar("InputType")
@@ -35,6 +41,7 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         max_generated_seq_len: int = 512,
         probability_from_score_temperature: float = 3.0,
         filter_duplicate_augmentations: bool = True,
+        canonicalization_processes: int = min(16, max(1, cpu_count() // 2)),
         **kwargs,
     ) -> None:
         """Initializes the SmilesTransformer model wrapper.
@@ -52,6 +59,11 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
             raise ValueError(
                 "Class based on `AbstractSmilesTransformerModel` should extended `ReactionModel`"
             )
+
+        if canonicalization_processes <= 0:
+            raise ValueError("canonicalization_processes must be positive")
+        self._canonicalization_processes = canonicalization_processes
+        self._canonicalization_pool: Optional[Executor] = None
 
         # There should be exaclty one `*.ckpt` file under `model_dir`.
         chkpt_path = get_unique_file_in_dir(self.model_dir, pattern="*.ckpt")
@@ -79,6 +91,12 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         logger.info(f"Augmentation size: {self.augmentation_size}")
         logger.info(f"Maximum generated sequence length: {self.max_generated_seq_len}")
         logger.info(f"Filter duplicate augmentations: {self.filter_duplicate_augmentations}")
+        logger.info(f"Canonicalization processes: {self._canonicalization_processes}")
+
+    def _get_canonicalization_pool(self) -> Executor:
+        if self._canonicalization_pool is None:
+            self._canonicalization_pool = _get_reusable_executor(self._canonicalization_processes)
+        return self._canonicalization_pool
 
     def get_parameters(self):
         return self.model.parameters()
@@ -211,14 +229,9 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 assert isinstance(line[0], str)
                 lines.append((line[0], augmented_batch_scores[i][j]))
 
-        raw_predictions = []
-        pool = multiprocessing.Pool(4)
-
-        raw_predictions = pool.map(
-            func=canonicalize_smiles_clear_map, iterable=lines
+        raw_predictions = list(
+            self._get_canonicalization_pool().map(canonicalize_smiles_clear_map, lines)
         )  # canonicalize reactants and modify illegal reactants into empty strings
-        pool.close()
-        pool.join()
 
         predictions = []
         left_index = 0
