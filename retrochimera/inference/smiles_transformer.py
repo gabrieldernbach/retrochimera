@@ -285,7 +285,8 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         self, reaction_smiles: list[str], minibatch_size: int = 32
     ) -> tuple[list[float], list[float]]:
         """Compute total and average probabilities for a list of reaction SMILES strings."""
-        return self.model.compute_probs(reaction_smiles, minibatch_size=minibatch_size)
+        with torch.inference_mode():
+            return self.model.compute_probs(reaction_smiles, minibatch_size=minibatch_size)
 
 
 class SmilesTransformerModel(
