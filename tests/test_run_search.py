@@ -110,8 +110,60 @@ def test_compute_probs_disables_gradients() -> None:
 
     wrapper: Any = object.__new__(AbstractSmilesTransformerModel)  # type: ignore[type-abstract]
     wrapper.model = Model()
+    wrapper.device = "cpu"
+    wrapper._autocast_dtype = None
 
     assert wrapper.compute_probs(["C>>C"], minibatch_size=1) == ([0.5], [0.5])
+
+
+def test_autocast_context_uses_selected_cuda_dtype(monkeypatch) -> None:
+    calls = []
+
+    def autocast(*, device_type, dtype):
+        calls.append((device_type, dtype))
+        return nullcontext()
+
+    wrapper: Any = object.__new__(AbstractSmilesTransformerModel)  # type: ignore[type-abstract]
+    wrapper.device = "cuda:0"
+    wrapper._autocast_dtype = torch.float16
+    monkeypatch.setattr(torch, "autocast", autocast)
+
+    with wrapper._autocast_context():
+        pass
+
+    assert calls == [("cuda", torch.float16)]
+
+
+def test_compute_probs_enters_autocast_context() -> None:
+    state = {"active": False}
+
+    class Context:
+        def __enter__(self):
+            state["active"] = True
+
+        def __exit__(self, *args):
+            state["active"] = False
+
+    class Model:
+        def compute_probs(self, reaction_smiles, minibatch_size):
+            assert state["active"]
+            return [0.5], [0.5]
+
+    wrapper: Any = object.__new__(AbstractSmilesTransformerModel)  # type: ignore[type-abstract]
+    wrapper.model = Model()
+    wrapper._autocast_context = Context
+
+    assert wrapper.compute_probs(["C>>C"], minibatch_size=1) == ([0.5], [0.5])
+    assert not state["active"]
+
+
+def test_inference_precision_must_be_supported(tmp_path) -> None:
+    with pytest.raises(ValueError, match="inference_precision"):
+        SmilesTransformerModel(
+            model_dir=tmp_path,
+            device="cpu",
+            inference_precision="float64",
+        )
 
 
 def test_canonicalization_pool_is_reused(monkeypatch) -> None:

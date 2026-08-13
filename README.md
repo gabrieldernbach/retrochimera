@@ -64,6 +64,10 @@ to eight molecules with a 500 ms fill window. Configure these with `max_active_s
 are divided across replicas unless `num_processes` is set explicitly. Concurrent search writes one
 indexed directory per target and does not support route plotting, lock-file recovery, or resuming.
 
+Transformer inference automatically uses BF16 on supported CUDA devices, falling back to FP16 on
+older CUDA hardware and FP32 on CPU. Set the `inference_precision` model argument to `float32` to
+restore full-precision inference.
+
 For installation, there are two additional dependency groups: `dev` for running tests, and `graphium` for building the model architecture we used for USPTO-50K; if you care about running the USPTO-50K checkpoint, you need to install via `pip install retrochimera[graphium]`.
 
 If you want to train your own checkpoint, please follow the instructions in [`retrochimera/README.md`](retrochimera/README.md).
