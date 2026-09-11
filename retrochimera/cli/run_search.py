@@ -37,9 +37,9 @@ class SearchConfig(BackwardModelConfig, search.BaseSearchConfig):
     """Config for running search for given search targets."""
 
     max_active_searches: int = 32
-    inference_batch_size: int = 8
+    inference_batch_size: int = 16
     inference_batch_wait_s: float = 0.5
-    inference_replicas: int = 2
+    inference_replicas: int = 1
     num_routes_to_plot: int = 0
     seed: int = 0
 

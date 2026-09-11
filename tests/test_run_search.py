@@ -60,6 +60,14 @@ class RecordingModel(BackwardReactionModel):
                 self.active_calls -= 1
 
 
+def test_search_config_uses_throughput_defaults() -> None:
+    config = run_search.SearchConfig()
+
+    assert config.max_active_searches == 32
+    assert config.inference_batch_size == 16
+    assert config.inference_replicas == 1
+
+
 def test_parallel_ensemble_workers_disable_gradients(monkeypatch) -> None:
     class Stream:
         def synchronize(self) -> None:
@@ -590,6 +598,7 @@ def test_run_from_config_loads_needed_replicas(monkeypatch, tmp_path: Path) -> N
             append_timestamp_to_dir=False,
             use_gpu=False,
             save_graph=False,
+            inference_replicas=2,
         )
     )
 

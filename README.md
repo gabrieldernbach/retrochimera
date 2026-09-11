@@ -58,8 +58,8 @@ python -m retrochimera.cli.run_search \
     results_dir=/data/results/
 ```
 
-The defaults keep up to 32 searches active and use two model replicas, each forming batches of up
-to eight molecules with a 500 ms fill window. Configure these with `max_active_searches`,
+The defaults keep up to 32 searches active and use one model replica forming batches of up to 16
+molecules with a 500 ms fill window. Configure these with `max_active_searches`,
 `inference_replicas`, `inference_batch_size`, and `inference_batch_wait_s`. Rule-worker processes
 are divided across replicas unless `num_processes` is set explicitly. Concurrent search writes one
 indexed directory per target and does not support route plotting, lock-file recovery, or resuming.
@@ -68,7 +68,7 @@ Transformer inference automatically uses BF16 on supported CUDA devices, falling
 older CUDA hardware and FP32 on CPU. Set the `inference_precision` model argument to `float32` to
 restore full-precision inference.
 
-Transformer output canonicalization uses a reusable process pool and defaults to chunks of 16
+Transformer output canonicalization uses a reusable process pool and defaults to chunks of eight
 predictions. Adjust the `canonicalization_chunksize` model argument for substantially different
 batch sizes.
 
