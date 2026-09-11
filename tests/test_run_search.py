@@ -1,4 +1,5 @@
 import json
+import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +17,11 @@ from retrochimera.cli import run_search
 from retrochimera.cli.eval import BackwardModelClass
 from retrochimera.inference import smiles_transformer as smiles_transformer_inference
 from retrochimera.inference.retrochimera import RetroChimeraModel
-from retrochimera.inference.smiles_transformer import AbstractSmilesTransformerModel
+from retrochimera.inference.smiles_transformer import (
+    AbstractSmilesTransformerModel,
+    SmilesTransformerModel,
+)
+from retrochimera.utils.root_aligned import AUGMENTATION_SEED_METADATA_KEY
 
 
 class RecordingModel(BackwardReactionModel):
@@ -254,6 +259,65 @@ def test_proxies_have_independent_caches_and_results() -> None:
     assert outputs[1][0][0].metadata["source"] == molecule.smiles
     assert "changed" not in next(iter(outputs[1][0][0].reactants)).metadata
     assert len(backend.calls) == 2
+
+
+def test_target_augmentation_rng_is_independent_of_scheduling() -> None:
+    class SeedRecordingModel(RecordingModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.seeds: list[tuple[int, int]] = []
+
+        def _get_reactions(self, inputs, num_results):
+            self.seeds.extend(
+                (
+                    int(input.identifier),
+                    input.metadata[AUGMENTATION_SEED_METADATA_KEY],
+                )
+                for input in inputs
+            )
+            return super()._get_reactions(inputs, num_results)
+
+    def collect(order: list[int]) -> dict[int, list[int]]:
+        backend = SeedRecordingModel()
+        with run_search._InferenceBroker(backend, 1, 0.0, 1) as broker:
+            models = [
+                run_search._BrokeredBackwardReactionModel(
+                    broker,
+                    augmentation_rng=random.Random(f"17:{target_index}"),
+                )
+                for target_index in range(2)
+            ]
+            for target_index in order:
+                models[target_index](
+                    [Molecule("CC", identifier=target_index)],
+                    num_results=1,
+                )
+
+        seeds: dict[int, list[int]] = {0: [], 1: []}
+        for target_index, seed in backend.seeds:
+            seeds[target_index].append(seed)
+        return seeds
+
+    assert collect([0, 1, 0, 1]) == collect([1, 1, 0, 0])
+
+
+def test_seeded_augmentation_does_not_consume_global_random_state() -> None:
+    model: Any = object.__new__(SmilesTransformerModel)
+    model.augmentation_size = 4
+    molecule = Molecule(
+        "CCCO",
+        metadata={AUGMENTATION_SEED_METADATA_KEY: 1234},
+    )
+
+    random.seed(99)
+    expected_next_random = random.random()
+    random.seed(99)
+
+    first = model._augment_input(molecule)
+    second = model._augment_input(molecule)
+
+    assert first == second
+    assert random.random() == expected_next_random
 
 
 @pytest.mark.parametrize(
