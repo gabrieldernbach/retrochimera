@@ -6,6 +6,7 @@ import json
 import math
 import pickle
 import queue
+import random
 import sys
 import threading
 import time
@@ -28,6 +29,7 @@ from retrochimera import inference
 from retrochimera.chem.rules import RuleBasedRetrosynthesizer
 from retrochimera.cli.eval import BackwardModelConfig
 from retrochimera.utils.misc import lookup_by_name
+from retrochimera.utils.root_aligned import AUGMENTATION_SEED_METADATA_KEY
 
 
 @dataclass
@@ -39,6 +41,7 @@ class SearchConfig(BackwardModelConfig, search.BaseSearchConfig):
     inference_batch_wait_s: float = 0.5
     inference_replicas: int = 2
     num_routes_to_plot: int = 0
+    seed: int = 0
 
 
 @dataclass
@@ -142,12 +145,14 @@ class _BrokeredBackwardReactionModel(BackwardReactionModel):
         self,
         broker: _InferenceBroker,
         cancel_event: Optional[threading.Event] = None,
+        augmentation_rng: Optional[random.Random] = None,
         **kwargs: Any,
     ) -> None:
         kwargs.setdefault("remove_duplicates", False)
         super().__init__(**kwargs)
         self._broker = broker
         self._cancel_event = cancel_event or threading.Event()
+        self._augmentation_rng = augmentation_rng
 
     def num_calls(self, count_cache: Optional[bool] = None) -> int:
         return (
@@ -161,7 +166,23 @@ class _BrokeredBackwardReactionModel(BackwardReactionModel):
     ) -> list[Sequence[SingleProductReaction]]:
         if self._cancel_event.is_set():
             raise CancelledError()
-        outputs = [future.result() for future in self._broker.submit(inputs, num_results)]
+        broker_inputs = inputs
+        if self._augmentation_rng is not None:
+            broker_inputs = []
+            for input in inputs:
+                metadata = input.metadata.copy()
+                metadata[AUGMENTATION_SEED_METADATA_KEY] = self._augmentation_rng.getrandbits(64)
+                broker_inputs.append(
+                    Molecule(
+                        input.smiles,
+                        identifier=input.identifier,
+                        canonicalize=False,
+                        make_rdkit_mol=False,
+                        metadata=metadata,
+                    )
+                )
+
+        outputs = [future.result() for future in self._broker.submit(broker_inputs, num_results)]
         if self._cancel_event.is_set():
             raise CancelledError()
         return outputs
@@ -240,6 +261,7 @@ def _run_target(
     model = _BrokeredBackwardReactionModel(
         broker,
         cancel_event,
+        augmentation_rng=random.Random(f"{config.seed}:{index}"),
         use_cache=config.reaction_model_use_cache,
         default_num_results=config.num_top_results,
     )
@@ -275,7 +297,7 @@ def _run_target(
 def run_from_config(config: SearchConfig) -> Path:
     _validate_config(config)
     targets = _get_search_targets(config)
-    set_random_seed(0)
+    set_random_seed(config.seed)
 
     dirname = config.model_class.name
     if config.append_timestamp_to_dir:
