@@ -1,5 +1,6 @@
 import argparse
 import math
+import operator
 import random
 from abc import abstractmethod
 from concurrent.futures import Executor
@@ -224,10 +225,7 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
     def _get_reactions(
         self, inputs: list[InputType], num_results: int
     ) -> list[Sequence[ReactionType]]:
-        from retrochimera.utils.root_aligned_score import (
-            canonicalize_smiles_clear_map,
-            compute_rank,
-        )
+        from retrochimera.utils.root_aligned_score import compute_rank
 
         # Step 1: Perform data augmentation on the input side (and convert to SMILES along the way).
         augmented_inputs: list[str] = []
@@ -298,7 +296,9 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 assert isinstance(line[0], str)
                 lines.append((line[0], augmented_batch_scores[i][j]))
 
-        raw_predictions = self._canonicalize_predictions(lines)  # canonicalize reactants and modify illegal reactants into empty strings
+        raw_predictions = self._canonicalize_predictions(
+            lines
+        )  # canonicalize reactants and modify illegal reactants into empty strings
 
         predictions = []
         left_index = 0
