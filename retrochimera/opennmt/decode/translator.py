@@ -250,7 +250,7 @@ class Translator(object):
             any_finished = decode_strategy.is_finished.any()
             source_rows_compacted = False
             if any_finished:
-                source_rows_compacted = bool(decode_strategy.update_finished())
+                source_rows_compacted = decode_strategy.update_finished()
                 if decode_strategy.done:
                     break
 
