@@ -60,6 +60,14 @@ class RecordingModel(BackwardReactionModel):
                 self.active_calls -= 1
 
 
+def test_search_config_uses_throughput_defaults() -> None:
+    config = run_search.SearchConfig()
+
+    assert config.max_active_searches == 32
+    assert config.inference_batch_size == 16
+    assert config.inference_replicas == 1
+
+
 def test_parallel_ensemble_workers_disable_gradients(monkeypatch) -> None:
     class Stream:
         def synchronize(self) -> None:
@@ -184,6 +192,39 @@ def test_canonicalization_pool_is_reused(monkeypatch) -> None:
     assert model._get_canonicalization_pool() is pool
     assert model._get_canonicalization_pool() is pool
     assert calls == 1
+
+
+def test_canonicalization_chunksize_preserves_order_and_output() -> None:
+    class RecordingPool:
+        def __init__(self) -> None:
+            self.chunksize = None
+
+        def map(self, function, values, *, chunksize):
+            self.chunksize = chunksize
+            return map(function, values)
+
+    pool = RecordingPool()
+    model: Any = object.__new__(AbstractSmilesTransformerModel)  # type: ignore[type-abstract]
+    model._canonicalization_chunksize = 7
+    model._canonicalization_pool = pool
+    lines = [("C(C)O", 0.1), ("not-a-smiles", 0.2), ("N.CC", 0.3)]
+
+    assert model._canonicalize_predictions(lines) == [
+        ("CCO", "CCO", 0.1),
+        ("", "", 0.2),
+        ("CC.N", "CC", 0.3),
+    ]
+    assert pool.chunksize == 7
+
+
+@pytest.mark.parametrize("chunksize", [0, -1, True, 1.5])
+def test_canonicalization_chunksize_must_be_positive_integer(tmp_path, chunksize) -> None:
+    with pytest.raises(ValueError, match="canonicalization_chunksize"):
+        SmilesTransformerModel(
+            model_dir=tmp_path,
+            device="cpu",
+            canonicalization_chunksize=chunksize,
+        )
 
 
 def _call_together(
@@ -557,6 +598,7 @@ def test_run_from_config_loads_needed_replicas(monkeypatch, tmp_path: Path) -> N
             append_timestamp_to_dir=False,
             use_gpu=False,
             save_graph=False,
+            inference_replicas=2,
         )
     )
 

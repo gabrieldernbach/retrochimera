@@ -1,5 +1,6 @@
 import argparse
 import math
+import operator
 import random
 from abc import abstractmethod
 from concurrent.futures import Executor
@@ -48,6 +49,7 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         probability_from_score_temperature: float = 3.0,
         filter_duplicate_augmentations: bool = True,
         canonicalization_processes: int = min(16, max(1, cpu_count() // 2)),
+        canonicalization_chunksize: int = 8,
         inference_precision: str = "auto",
         **kwargs,
     ) -> None:
@@ -97,7 +99,16 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
             raise ValueError("bfloat16 inference is not supported on this CUDA device")
         if canonicalization_processes <= 0:
             raise ValueError("canonicalization_processes must be positive")
+        if isinstance(canonicalization_chunksize, bool):
+            raise ValueError("canonicalization_chunksize must be a positive integer")
+        try:
+            canonicalization_chunksize = operator.index(canonicalization_chunksize)
+        except TypeError as error:
+            raise ValueError("canonicalization_chunksize must be a positive integer") from error
+        if canonicalization_chunksize < 1:
+            raise ValueError("canonicalization_chunksize must be a positive integer")
         self._canonicalization_processes = canonicalization_processes
+        self._canonicalization_chunksize = canonicalization_chunksize
         self._canonicalization_pool: Optional[Executor] = None
         self._autocast_dtype = precision_to_dtype[inference_precision]
 
@@ -128,12 +139,26 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         logger.info(f"Maximum generated sequence length: {self.max_generated_seq_len}")
         logger.info(f"Filter duplicate augmentations: {self.filter_duplicate_augmentations}")
         logger.info(f"Canonicalization processes: {self._canonicalization_processes}")
+        logger.info(f"Canonicalization chunksize: {self._canonicalization_chunksize}")
         logger.info(f"Inference precision: {inference_precision}")
 
     def _get_canonicalization_pool(self) -> Executor:
         if self._canonicalization_pool is None:
             self._canonicalization_pool = _get_reusable_executor(self._canonicalization_processes)
         return self._canonicalization_pool
+
+    def _canonicalize_predictions(
+        self, lines: list[tuple[str, float]]
+    ) -> list[tuple[str, str, float]]:
+        from retrochimera.utils.root_aligned_score import canonicalize_smiles_clear_map
+
+        return list(
+            self._get_canonicalization_pool().map(
+                canonicalize_smiles_clear_map,
+                lines,
+                chunksize=self._canonicalization_chunksize,
+            )
+        )
 
     def _autocast_context(self):
         return (
@@ -200,10 +225,7 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
     def _get_reactions(
         self, inputs: list[InputType], num_results: int
     ) -> list[Sequence[ReactionType]]:
-        from retrochimera.utils.root_aligned_score import (
-            canonicalize_smiles_clear_map,
-            compute_rank,
-        )
+        from retrochimera.utils.root_aligned_score import compute_rank
 
         # Step 1: Perform data augmentation on the input side (and convert to SMILES along the way).
         augmented_inputs: list[str] = []
@@ -274,8 +296,8 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 assert isinstance(line[0], str)
                 lines.append((line[0], augmented_batch_scores[i][j]))
 
-        raw_predictions = list(
-            self._get_canonicalization_pool().map(canonicalize_smiles_clear_map, lines)
+        raw_predictions = self._canonicalize_predictions(
+            lines
         )  # canonicalize reactants and modify illegal reactants into empty strings
 
         predictions = []
