@@ -271,7 +271,7 @@ class Translator(object):
                 if src_map is not None:
                     src_map = src_map.index_select(1, select_indices)
 
-            if select_indices is not None:
+            if select_indices is not None and (parallel_paths > 1 or source_rows_compacted):
                 self.model.decoder.map_state(
                     lambda state, dim: state.index_select(dim, select_indices),
                     map_src=source_rows_compacted,

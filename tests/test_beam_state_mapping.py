@@ -268,6 +268,61 @@ class _RecordingDecoder:
         self.calls.append((only_map_src, kwargs))
 
 
+@pytest.mark.parametrize("parallel_paths", [1, 2])
+def test_translator_skips_single_path_mapping_until_compaction(parallel_paths: int) -> None:
+    decoder = _RecordingDecoder()
+    translator: Any = object.__new__(Translator)
+    translator.model = SimpleNamespace(decoder=decoder)
+    translator.tgt_prefix = False
+    translator.customised_beam_search = False
+    translator._tgt_pad_idx = 0
+    translator._run_encoder = lambda batch: (
+        batch["src"][0],
+        None,
+        torch.zeros(2, 2, 1),
+        batch["src"][1],
+    )
+    observed_rows: list[int] = []
+
+    def decode(decoder_input, memory_bank, batch, **kwargs):
+        step = len(observed_rows)
+        observed_rows.append(decoder_input.size(1))
+        log_probs = torch.full((decoder_input.size(1), 5), -100.0)
+        log_probs[:, 4] = 0.0
+        if step == 1:
+            log_probs[:parallel_paths, 2] = 1.0
+        elif step == 2:
+            log_probs[:, 2] = 1.0
+        return log_probs, None
+
+    translator._decode_and_generate = decode
+    beam = BeamSearch(
+        pad=0,
+        bos=1,
+        eos=2,
+        unk=3,
+        batch_size=2,
+        beam_size=parallel_paths,
+        n_best=1,
+        max_length=5,
+    )
+    batch = {
+        "src": (torch.ones(2, 2, 1, dtype=torch.long), torch.tensor([1, 2])),
+        "batch_size": 2,
+    }
+    results = translator._translate_batch_with_strategy(batch, beam)
+
+    expected_calls: list[tuple[bool, dict[str, bool]]] = [(True, {})]
+    if parallel_paths > 1:
+        expected_calls.append((False, {"map_src": False, "map_context": False, "map_self": True}))
+    expected_calls.append((False, {"map_src": True, "map_context": True, "map_self": True}))
+    assert decoder.calls == expected_calls
+    assert observed_rows == [2 * parallel_paths, 2 * parallel_paths, parallel_paths]
+    assert results["predictions"][0][0].tolist() == [4, 2]
+    assert results["predictions"][1][0].tolist() == [4, 4, 2]
+    assert beam.done
+
+
 class _ScriptedStrategy:
     parallel_paths = 2
     max_length = 3
