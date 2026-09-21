@@ -194,6 +194,27 @@ def _beam_search(customised_beam_search: bool) -> BeamSearch:
     return beam
 
 
+def test_beam_search_requires_initialization_before_updating() -> None:
+    with pytest.raises(AssertionError, match="Beam search must be initialized"):
+        BeamSearch().update_finished()
+
+
+@pytest.mark.parametrize("customised_beam_search", [False, True])
+def test_beam_search_records_finished_attention(customised_beam_search: bool) -> None:
+    beam = _beam_search(customised_beam_search)
+    beam.return_attention = True
+    log_probs = torch.full((4, 5), -100.0)
+    log_probs[0, beam.eos] = 0.0
+    log_probs[2, beam.eos] = 0.0
+    attention = torch.arange(8, dtype=torch.float).view(1, 4, 2)
+
+    beam.advance(log_probs, attn=attention)
+    beam.update_finished()
+
+    assert torch.equal(beam.hypotheses[0][0][2], attention[:, 0, :])
+    assert torch.equal(beam.hypotheses[1][0][2], attention[:, 2, :])
+
+
 def test_beam_search_reports_source_compaction_without_changing_results() -> None:
     beam = _beam_search(customised_beam_search=False)
     log_probs = torch.full((4, 5), -100.0)

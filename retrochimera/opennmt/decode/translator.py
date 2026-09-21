@@ -16,7 +16,7 @@ Modifications:
 4. Switched `torch.no_grad()` to `torch.inference_mode()` for better performance.
 5. Optimized code for more efficient tensor operations and memory usage.
 """
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import torch
 from torch.nn.functional import log_softmax
@@ -188,15 +188,15 @@ class Translator(object):
         if fn_map_state is not None:
             self.model.decoder.map_state(fn_map_state, only_map_src=True)
 
+        memory_bank_bt: Union[torch.Tensor, tuple[torch.Tensor, ...]]
         if isinstance(memory_bank, tuple):
             memory_bank_bt = tuple(x.transpose(0, 1).contiguous() for x in memory_bank)
             src_pad_len = memory_bank_bt[0].size(1)
             memory_device = memory_bank_bt[0].device
         else:
-            tensor_memory_bank_bt = memory_bank.transpose(0, 1).contiguous()
-            memory_bank_bt = tensor_memory_bank_bt
-            src_pad_len = tensor_memory_bank_bt.size(1)
-            memory_device = tensor_memory_bank_bt.device
+            memory_bank_bt = memory_bank.transpose(0, 1).contiguous()
+            src_pad_len = memory_bank_bt.size(1)
+            memory_device = memory_bank_bt.device
         memory_padding_mask = torch.arange(
             0, src_pad_len, device=memory_device
         ) >= memory_lengths.unsqueeze(1)
