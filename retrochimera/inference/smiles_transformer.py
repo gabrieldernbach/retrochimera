@@ -217,6 +217,8 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 assert isinstance(line[0], str)
                 lines.append((line[0], augmented_batch_scores[i][j]))
 
+        # Keep workers reusable across batches; Loky retires them after five idle minutes
+        # and restarts them on demand, so do not shut down the shared executor here.
         executor = get_reusable_executor(max_workers=self._canonicalization_processes, timeout=300)
         raw_predictions = list(
             executor.map(canonicalize_smiles_clear_map, lines)
