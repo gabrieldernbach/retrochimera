@@ -1,25 +1,52 @@
-from types import SimpleNamespace
-from typing import Any
+import subprocess
+import sys
+import textwrap
 
-from retrochimera.inference import smiles_transformer as smiles_transformer_inference
-from retrochimera.inference.smiles_transformer import AbstractSmilesTransformerModel
+import pytest
 
 
-def test_canonicalization_pool_is_reused(monkeypatch) -> None:
-    pool = SimpleNamespace()
-    calls = 0
+@pytest.mark.parametrize("joblib_first", [False, True])
+def test_canonicalization_executor_is_independent_of_joblib(joblib_first: bool) -> None:
+    # A fresh process prevents earlier Joblib calls from hiding the singleton collision.
+    script = textwrap.dedent(
+        """
+        import sys
 
-    def create_pool(max_workers):
-        nonlocal calls
-        calls += 1
-        assert max_workers == 3
-        return pool
+        from joblib import Parallel, delayed
 
-    model: Any = object.__new__(AbstractSmilesTransformerModel)  # type: ignore[type-abstract]
-    model._canonicalization_processes = 3
-    model._canonicalization_pool = None
-    monkeypatch.setattr(smiles_transformer_inference, "_get_reusable_executor", create_pool)
+        from retrochimera.inference.smiles_transformer import get_reusable_executor
+        from retrochimera.utils.root_aligned_score import canonicalize_smiles_clear_map
 
-    assert model._get_canonicalization_pool() is pool
-    assert model._get_canonicalization_pool() is pool
-    assert calls == 1
+        def run_joblib():
+            assert Parallel(n_jobs=2, backend="loky")(
+                delayed(abs)(value) for value in [-1, -2]
+            ) == [1, 2]
+
+        if sys.argv[1] == "True":
+            run_joblib()
+        lines = [("OCC", 0.8), ("CC", 0.2)]
+        expected = [canonicalize_smiles_clear_map(line) for line in lines]
+        executor = get_reusable_executor(max_workers=2, timeout=300)
+        try:
+            assert list(executor.map(canonicalize_smiles_clear_map, lines)) == expected
+            run_joblib()
+            assert get_reusable_executor(max_workers=2, timeout=300) is executor
+            assert list(executor.map(canonicalize_smiles_clear_map, lines)) == expected
+        finally:
+            executor.shutdown(wait=True)
+
+        replacement = get_reusable_executor(max_workers=2, timeout=300)
+        try:
+            assert replacement is not executor
+            assert list(replacement.map(canonicalize_smiles_clear_map, lines)) == expected
+        finally:
+            replacement.shutdown(wait=True)
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(joblib_first)],
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

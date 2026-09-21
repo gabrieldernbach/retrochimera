@@ -1,10 +1,10 @@
 import argparse
 import math
 from abc import abstractmethod
-from concurrent.futures import Executor
-from typing import Any, Generic, Optional, Sequence, TypeVar
+from typing import Any, Generic, Sequence, TypeVar
 
 import torch
+from loky import get_reusable_executor
 from syntheseus import Molecule, Reaction, SingleProductReaction
 from syntheseus.interface.reaction import ReactionMetaData
 from syntheseus.reaction_prediction.inference_base import ExternalBackwardReactionModel
@@ -20,12 +20,6 @@ from retrochimera.utils.logging import get_logger
 from retrochimera.utils.root_aligned import clear_map_canonical_smiles, get_product_roots
 
 logger = get_logger(__name__)
-
-
-def _get_reusable_executor(max_workers: int) -> Executor:
-    from joblib.externals.loky import get_reusable_executor
-
-    return get_reusable_executor(max_workers=max_workers, timeout=300)
 
 
 InputType = TypeVar("InputType")
@@ -63,7 +57,6 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         if canonicalization_processes <= 0:
             raise ValueError("canonicalization_processes must be positive")
         self._canonicalization_processes = canonicalization_processes
-        self._canonicalization_pool: Optional[Executor] = None
 
         # There should be exaclty one `*.ckpt` file under `model_dir`.
         chkpt_path = get_unique_file_in_dir(self.model_dir, pattern="*.ckpt")
@@ -92,11 +85,6 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         logger.info(f"Maximum generated sequence length: {self.max_generated_seq_len}")
         logger.info(f"Filter duplicate augmentations: {self.filter_duplicate_augmentations}")
         logger.info(f"Canonicalization processes: {self._canonicalization_processes}")
-
-    def _get_canonicalization_pool(self) -> Executor:
-        if self._canonicalization_pool is None:
-            self._canonicalization_pool = _get_reusable_executor(self._canonicalization_processes)
-        return self._canonicalization_pool
 
     def get_parameters(self):
         return self.model.parameters()
@@ -229,8 +217,9 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 assert isinstance(line[0], str)
                 lines.append((line[0], augmented_batch_scores[i][j]))
 
+        executor = get_reusable_executor(max_workers=self._canonicalization_processes, timeout=300)
         raw_predictions = list(
-            self._get_canonicalization_pool().map(canonicalize_smiles_clear_map, lines)
+            executor.map(canonicalize_smiles_clear_map, lines)
         )  # canonicalize reactants and modify illegal reactants into empty strings
 
         predictions = []

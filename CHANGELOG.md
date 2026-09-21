@@ -10,6 +10,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ### Changed
 
 - Reduce redundant source-memory and attention-cache copies during SMILES Transformer beam search ([#38](https://github.com/microsoft/retrochimera/pull/38)) ([@gabrieldernbach])
+- Reuse upstream Loky workers for SMILES canonicalization without sharing Joblib's executor ([#39](https://github.com/microsoft/retrochimera/pull/39)).
 
 ## [1.3.0] - 2026-09-21
 
