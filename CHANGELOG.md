@@ -9,6 +9,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Changed
 
+- Reduce redundant source-memory and attention-cache copies during SMILES Transformer beam search ([#38](https://github.com/microsoft/retrochimera/pull/38)) ([@gabrieldernbach])
 - Make template extraction more robust ([#28](https://github.com/microsoft/retrochimera/pull/28)) ([@kmaziarz])
 - Improve the data filtering script ([#30](https://github.com/microsoft/retrochimera/pull/30)) ([@kmaziarz])
 - Remove dependency on `syntheseus-root-aligned` and vendor relevant utils ([#27](https://github.com/microsoft/retrochimera/pull/27)) ([@lgeiger])
@@ -65,3 +66,4 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 [@kmaziarz]: https://github.com/kmaziarz
 [@lgeiger]: https://github.com/lgeiger
+[@gabrieldernbach]: https://github.com/gabrieldernbach
