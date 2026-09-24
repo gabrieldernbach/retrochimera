@@ -331,6 +331,8 @@ def _translate_two_sources(decoder, tuple_memory=False):
     Step 2: source B continues alone.
     Step 3: source B finishes.
     """
+    # Synthetic encoder inputs avoid a checkpoint; distinct sources and lengths expose
+    # selecting the wrong rows. Real beam search and decoder caches exercise the wiring.
     torch.manual_seed(7)
     memories = (torch.randn(2, 2, 4), torch.randn(2, 2, 4))
     embedding = torch.nn.Embedding(6, 4)
@@ -388,6 +390,8 @@ def _translate_two_sources(decoder, tuple_memory=False):
             }
         )
         logits = generator(output.squeeze(1))
+        # Force a beam to finish before its source, then decode after source removal:
+        # random EOS timing could skip either transition and hide a mapping bug.
         eos_scores = logits[:, 2].clone()
         logits[:, :4] = -100
         if step == 0:  # Finish only A's best beam.
@@ -414,7 +418,8 @@ def test_translator_decoder_matches_full_mapping(monkeypatch) -> None:
     optimized.load_state_dict(reference.state_dict())
     original_map = reference.map_state
 
-    # Baseline: ignore the optimization flags and always map all decoder state.
+    # Always mapping state is the conservative reference: skipping redundant copies
+    # must give the same results, while still executing the real mapping function.
     monkeypatch.setattr(
         reference,
         "map_state",
@@ -428,6 +433,8 @@ def test_translator_decoder_matches_full_mapping(monkeypatch) -> None:
             assert len(expected_batch) == len(actual_batch) == 1
             assert torch.equal(expected_batch[0], actual_batch[0])
 
+    # Equal outputs alone would also pass if the optimization were removed.
+    # Identity checks ensure unchanged source caches are reused, not copied.
     for key, batch_dim in (("source", 1), ("keys", 0), ("values", 0)):
         assert trace[0][key] is trace[1][key]  # No source removed yet.
         remaining_source = trace[0][key].narrow(batch_dim, start=2, length=2)
