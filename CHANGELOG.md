@@ -11,6 +11,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 - Reduce redundant source-memory and attention-cache copies during SMILES Transformer beam search ([#38](https://github.com/microsoft/retrochimera/pull/38)) ([@gabrieldernbach])
 - Reuse workers for SMILES canonicalization without ([#39](https://github.com/microsoft/retrochimera/pull/39)).
+- Disable autograd in inference-only call paths ([#40](https://github.com/microsoft/retrochimera/pull/40)) ([@gabrieldernbach])
 
 ## [1.3.0] - 2026-09-21
 
