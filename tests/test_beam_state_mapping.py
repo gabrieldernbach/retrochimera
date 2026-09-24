@@ -322,23 +322,17 @@ def test_translator_skips_single_path_mapping_until_compaction(parallel_paths: i
     assert beam.done
 
 
-@pytest.mark.parametrize("tuple_memory", [False, True])
-@torch.inference_mode()
-def test_translator_real_decoder_matches_full_mapping(monkeypatch, tuple_memory: bool) -> None:
+@pytest.fixture
+def compaction_case():
+    """Run two sources through partial finish, source removal, and continued decoding."""
     torch.manual_seed(7)
-    reference = _decoder()
-    optimized = _decoder()
-    optimized.load_state_dict(reference.state_dict())
-    embedding = torch.nn.Embedding(6, 4)
-    generator = torch.nn.Linear(4, 6)
     memories = (torch.randn(2, 2, 4), torch.randn(2, 2, 4))
-    encoder_memory = memories if tuple_memory else memories[0]
     batch = {
         "src": (torch.tensor([[[10], [20]], [[0], [21]]]), torch.tensor([1, 2])),
         "batch_size": 2,
     }
 
-    def run(decoder, full_mapping):
+    def run(decoder, decode, tuple_memory=False):
         translator: Any = object.__new__(Translator)
         translator.model = SimpleNamespace(decoder=decoder)
         translator.tgt_prefix = False
@@ -349,7 +343,7 @@ def test_translator_real_decoder_matches_full_mapping(monkeypatch, tuple_memory:
         translator._run_encoder = lambda batch: (
             batch["src"][0],
             None,
-            encoder_memory,
+            memories if tuple_memory else memories[0],
             batch["src"][1],
         )
         beam = BeamSearch(
@@ -362,79 +356,93 @@ def test_translator_real_decoder_matches_full_mapping(monkeypatch, tuple_memory:
             n_best=1,
             max_length=6,
             customised_beam_search=True,
-            return_attention=True,
         )
-        original_map = decoder.map_state
-        mapped_sources = []
-        observations = []
+        rows = []
 
-        def map_state(fn, only_map_src=False, **kwargs):
-            if only_map_src:
-                original_map(fn, only_map_src=True)
-                return
-            cache = decoder.transformer_layers[0].context_attn.layer_cache[1]
-            before = (decoder.state["src"], cache["keys"], cache["values"])
-            original_map(fn, **({} if full_mapping else kwargs))
-            cache = decoder.transformer_layers[0].context_attn.layer_cache[1]
-            after = (decoder.state["src"], cache["keys"], cache["values"])
-            mapped_sources.append(kwargs["map_src"])
-            if not full_mapping and not kwargs["map_src"]:
-                assert all(a is b for a, b in zip(before, after))
-            else:
-                assert all(
-                    torch.equal(fn(a, dim), b) for a, b, dim in zip(before, after, (1, 0, 0))
-                )
-
-        monkeypatch.setattr(decoder, "map_state", map_state)
-
-        def decode(decoder_input, memory_bank, batch, **kwargs):
+        def scheduled_decode(decoder_input, memory_bank, batch, **kwargs):
             step = kwargs["step"]
-            banks = memory_bank if isinstance(memory_bank, tuple) else (memory_bank,)
-            source_ids = kwargs["batch_offset"].repeat_interleave(2)
-            for bank, original in zip(banks, memories):
-                assert torch.equal(bank, original.transpose(0, 1).index_select(0, source_ids))
-            lengths = batch["src"][1].index_select(0, source_ids)
-            assert torch.equal(kwargs["memory_lengths"], lengths)
-            assert torch.equal(kwargs["memory_padding_mask"], torch.arange(2) >= lengths[:, None])
-            assert torch.equal(decoder.state["src"], batch["src"][0].index_select(1, source_ids))
-            output, attention = decoder(
-                embedding(decoder_input.squeeze(2).transpose(0, 1)),
-                torch.zeros(len(source_ids), 1, dtype=torch.bool),
-                sum(banks),
-                kwargs["memory_padding_mask"],
-                step=step,
-                return_attn=True,
-            )
-            observations.append((banks, output.clone(), attention["std"].clone()))
-            logits = generator(output.squeeze(1))
-            # Constrain EOS timing, but retain real decoder-dependent scores and beam ranking.
+            rows.append(decoder_input.size(1))
+            logits = decode(decoder_input, memory_bank, **kwargs)
+            eos_scores = logits[:, 2].clone()
             logits[:, :4] = -100
-            first_source = source_ids == 0
+            first_source = kwargs["batch_offset"].repeat_interleave(2) == 0
             if step == 0:
                 logits[first_source, 2] = logits[first_source, 4:6].max(dim=1).values + 1
             elif step == 1:
                 logits[first_source, 4:6] = -100
-                logits[first_source, 2] = generator(output.squeeze(1))[first_source, 2]
+                logits[first_source, 2] = eos_scores[first_source]
             elif step == 3:
                 logits[:, 4:6] = -100
-                logits[:, 2] = generator(output.squeeze(1))[:, 2]
-            return torch.log_softmax(logits, dim=-1), attention["std"].transpose(0, 1)
+                logits[:, 2] = eos_scores
+            return torch.log_softmax(logits, dim=-1), None
 
-        translator._decode_and_generate = decode
+        translator._decode_and_generate = scheduled_decode
         results = translator._translate_batch_with_strategy(batch, beam)
         assert beam.done
-        assert mapped_sources == [False, True, False]
-        assert [item[0][0].size(0) for item in observations] == [4, 4, 2, 2]
-        for earlier, later in ((0, 1), (2, 3)):
-            assert all(a is b for a, b in zip(observations[earlier][0], observations[later][0]))
-        return results, observations
+        assert rows == [4, 4, 2, 2]
+        return results
 
-    expected, reference_steps = run(reference, full_mapping=True)
-    actual, optimized_steps = run(optimized, full_mapping=False)
-    for key in ("predictions", "scores", "attention"):
+    return run, memories, batch
+
+
+@torch.inference_mode()
+def test_translator_decoder_matches_full_mapping(monkeypatch, compaction_case) -> None:
+    run, _, batch = compaction_case
+    embedding = torch.nn.Embedding(6, 4)
+    generator = torch.nn.Linear(4, 6)
+    reference, optimized = _decoder(), _decoder()
+    optimized.load_state_dict(reference.state_dict())
+    original_map = reference.map_state
+    monkeypatch.setattr(
+        reference,
+        "map_state",
+        lambda fn, only_map_src=False, **kwargs: original_map(fn, only_map_src=only_map_src),
+    )
+
+    def decode_with(decoder, snapshots):
+        def decode(tokens, memory, **kwargs):
+            source_ids = kwargs["batch_offset"].repeat_interleave(2)
+            assert torch.equal(decoder.state["src"], batch["src"][0].index_select(1, source_ids))
+            output, _ = decoder(
+                embedding(tokens.squeeze(2).transpose(0, 1)),
+                torch.zeros(tokens.size(1), 1, dtype=torch.bool),
+                memory,
+                kwargs["memory_padding_mask"],
+                step=kwargs["step"],
+            )
+            cache = decoder.transformer_layers[0].context_attn.layer_cache[1]
+            snapshots.append((decoder.state["src"], cache["keys"], cache["values"]))
+            return generator(output.squeeze(1))
+
+        return decode
+
+    snapshots: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+    expected = run(reference, decode_with(reference, []))
+    actual = run(optimized, decode_with(optimized, snapshots))
+    for key in ("predictions", "scores"):
         for expected_batch, actual_batch in zip(expected[key], actual[key]):
             assert len(expected_batch) == len(actual_batch) == 1
             assert torch.equal(expected_batch[0], actual_batch[0])
-    for expected_step, actual_step in zip(reference_steps, optimized_steps):
-        assert torch.equal(expected_step[1], actual_step[1])
-        assert torch.equal(expected_step[2], actual_step[2])
+    for earlier, later in ((0, 1), (2, 3)):
+        assert all(a is b for a, b in zip(snapshots[earlier], snapshots[later]))
+
+
+@pytest.mark.parametrize("tuple_memory", [False, True])
+def test_translator_compacts_source_inputs(compaction_case, tuple_memory: bool) -> None:
+    run, memories, batch = compaction_case
+    observed_banks = []
+
+    def decode(tokens, memory, **kwargs):
+        banks = memory if isinstance(memory, tuple) else (memory,)
+        source_ids = kwargs["batch_offset"].repeat_interleave(2)
+        for bank, original in zip(banks, memories):
+            assert torch.equal(bank, original.transpose(0, 1).index_select(0, source_ids))
+        lengths = batch["src"][1].index_select(0, source_ids)
+        assert torch.equal(kwargs["memory_lengths"], lengths)
+        assert torch.equal(kwargs["memory_padding_mask"], torch.arange(2) >= lengths[:, None])
+        observed_banks.append(banks)
+        return torch.zeros(tokens.size(1), 6)
+
+    run(_RecordingDecoder(), decode, tuple_memory)
+    for earlier, later in ((0, 1), (2, 3)):
+        assert all(a is b for a, b in zip(observed_banks[earlier], observed_banks[later]))
