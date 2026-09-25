@@ -7,6 +7,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-21
+
 ### Changed
 
 - Reduce redundant source-memory and attention-cache copies during SMILES Transformer beam search ([#38](https://github.com/microsoft/retrochimera/pull/38)) ([@gabrieldernbach])
@@ -59,10 +61,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 :seedling: Initial public release.
 
-[Unreleased]: https://github.com/microsoft/retrochimera/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/microsoft/retrochimera/compare/v1.3.0...HEAD
 [1.0.0]: https://github.com/microsoft/retrochimera/releases/tag/v1.0.0
 [1.1.0]: https://github.com/microsoft/retrochimera/releases/tag/v1.1.0
 [1.2.0]: https://github.com/microsoft/retrochimera/releases/tag/v1.2.0
+[1.3.0]: https://github.com/microsoft/retrochimera/releases/tag/v1.3.0
 
 [@kmaziarz]: https://github.com/kmaziarz
 [@lgeiger]: https://github.com/lgeiger
