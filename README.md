@@ -50,6 +50,21 @@ For installation, there are two additional dependency groups: `dev` for running 
 
 If you want to train your own checkpoint, please follow the instructions in [`retrochimera/README.md`](retrochimera/README.md).
 
+### Transformer inference precision
+
+The backward and forward SMILES Transformer wrappers accept the `inference_precision` model
+argument. The default, `auto`, enables BF16 autocast when the selected CUDA device reports BF16
+support, otherwise FP16 autocast on CUDA. On CPU, the wrapper does not add autocast. Explicit
+`float16` and `bfloat16` select the CUDA autocast dtype; explicit BF16 is rejected on CUDA devices
+that do not report support. Non-CUDA devices do not use wrapper-managed autocast, even when a
+low-precision option is requested.
+
+Set `inference_precision="float32"` to opt out of wrapper-managed autocast. This does not disable
+an enclosing caller-provided autocast context or change `float32_matmul_precision`/TF32 settings.
+The policy covers transformer decoding and `compute_probs`, not training or the template models.
+Reduced precision can change prediction rankings and search results; validate accuracy on your
+workload before relying on it. The automatic FP16 fallback remains unvalidated on real hardware.
+
 ## Checkpoints for RetroChimera 1
 
 The main (and most powerful) checkpoint we release is trained on [Pistachio](https://figshare.com/ndownloader/files/59468882).
