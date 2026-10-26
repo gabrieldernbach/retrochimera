@@ -68,11 +68,20 @@ def test_cuda_precision_selection_on_selected_device(
     assert not active_devices
 
 
-def test_default_precision_is_auto(make_model, monkeypatch):
-    monkeypatch.setattr(torch.cuda, "device", lambda device: nullcontext())
-    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_default_precision_is_float32(make_model, monkeypatch, device):
+    cuda_probe = Mock(side_effect=AssertionError("Default must not query CUDA support"))
+    autocast = Mock(side_effect=AssertionError("Default must not add autocast"))
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", cuda_probe)
+    monkeypatch.setattr(torch, "autocast", autocast)
 
-    assert make_model(device="cuda:0")._autocast_dtype == torch.bfloat16
+    wrapper = make_model(device=device)
+    assert wrapper._autocast_dtype is None
+    with wrapper._autocast_context():
+        pass
+
+    cuda_probe.assert_not_called()
+    autocast.assert_not_called()
 
 
 def test_explicit_unsupported_cuda_bf16_is_rejected(make_model, monkeypatch):

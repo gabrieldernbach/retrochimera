@@ -37,7 +37,7 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         probability_from_score_temperature: float = 3.0,
         filter_duplicate_augmentations: bool = True,
         canonicalization_processes: int = min(16, max(1, cpu_count() // 2)),
-        inference_precision: str = "auto",
+        inference_precision: str = "float32",
         **kwargs,
     ) -> None:
         """Initializes the SmilesTransformer model wrapper.
