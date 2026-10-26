@@ -56,14 +56,12 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 "Class based on `AbstractSmilesTransformerModel` should extended `ReactionModel`"
             )
 
-        device = getattr(self, "device")
-
         def cuda_bf16_supported() -> bool:
-            with torch.cuda.device(device):
+            with torch.cuda.device(self.device):
                 return torch.cuda.is_bf16_supported()
 
         if inference_precision == "auto":
-            if device.startswith("cuda"):
+            if self.device.startswith("cuda"):
                 inference_precision = "bfloat16" if cuda_bf16_supported() else "float16"
             else:
                 inference_precision = "float32"
@@ -80,7 +78,7 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
             )
         if (
             inference_precision == "bfloat16"
-            and device.startswith("cuda")
+            and self.device.startswith("cuda")
             and not cuda_bf16_supported()
         ):
             raise ValueError("bfloat16 inference is not supported on this CUDA device")
@@ -123,7 +121,7 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         # float32 opts out of wrapper-managed autocast, without overriding caller contexts.
         return (
             torch.autocast(device_type="cuda", dtype=self._autocast_dtype)
-            if self._autocast_dtype is not None and getattr(self, "device").startswith("cuda")
+            if self._autocast_dtype is not None and self.device.startswith("cuda")
             else nullcontext()
         )
 
