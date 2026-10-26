@@ -56,16 +56,6 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 "Class based on `AbstractSmilesTransformerModel` should extended `ReactionModel`"
             )
 
-        def cuda_bf16_supported() -> bool:
-            with torch.cuda.device(self.device):
-                return torch.cuda.is_bf16_supported()
-
-        if inference_precision == "auto":
-            if self.device.startswith("cuda"):
-                inference_precision = "bfloat16" if cuda_bf16_supported() else "float16"
-            else:
-                inference_precision = "float32"
-
         precision_to_dtype = {
             "float32": None,
             "float16": torch.float16,
@@ -76,12 +66,6 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 f"Unsupported inference_precision {inference_precision}; "
                 f"expected one of {sorted(precision_to_dtype)}"
             )
-        if (
-            inference_precision == "bfloat16"
-            and self.device.startswith("cuda")
-            and not cuda_bf16_supported()
-        ):
-            raise ValueError("bfloat16 inference is not supported on this CUDA device")
         self._autocast_dtype = precision_to_dtype[inference_precision]
 
         if canonicalization_processes <= 0:

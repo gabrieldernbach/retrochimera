@@ -9,7 +9,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Changed
 
-- Add configurable SMILES Transformer inference precision, defaulting to automatic BF16/FP16 autocast on CUDA ([#42](https://github.com/microsoft/retrochimera/pull/42)) ([@gabrieldernbach])
+- Add configurable SMILES Transformer inference precision, defaulting to float32 with explicit FP16/BF16 autocast options on CUDA ([#42](https://github.com/microsoft/retrochimera/pull/42)) ([@gabrieldernbach])
 - Reduce redundant source-memory and attention-cache copies during SMILES Transformer beam search ([#38](https://github.com/microsoft/retrochimera/pull/38)) ([@gabrieldernbach])
 - Reuse workers for SMILES canonicalization without ([#39](https://github.com/microsoft/retrochimera/pull/39)).
 - Disable autograd in inference-only call paths ([#40](https://github.com/microsoft/retrochimera/pull/40)) ([@gabrieldernbach])

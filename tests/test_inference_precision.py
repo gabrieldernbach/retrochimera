@@ -31,41 +31,20 @@ def make_model(request, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "precision,bf16_supported,expected_dtype",
+    "precision,expected_dtype",
     [
-        ("auto", True, torch.bfloat16),
-        ("auto", False, torch.float16),
-        ("float32", False, None),
-        ("float16", False, torch.float16),
-        ("bfloat16", True, torch.bfloat16),
+        ("float32", None),
+        ("float16", torch.float16),
+        ("bfloat16", torch.bfloat16),
     ],
 )
-def test_cuda_precision_selection_on_selected_device(
-    make_model, monkeypatch, precision, bf16_supported, expected_dtype
-):
-    active_devices = []
-    checked_devices = []
-
-    @contextmanager
-    def cuda_device(device):
-        active_devices.append(device)
-        try:
-            yield
-        finally:
-            active_devices.pop()
-
-    def supports_bf16():
-        assert active_devices == ["cuda:3"]
-        checked_devices.append(active_devices[-1])
-        return bf16_supported
-
-    monkeypatch.setattr(torch.cuda, "device", cuda_device)
-    monkeypatch.setattr(torch.cuda, "is_bf16_supported", supports_bf16)
+def test_cuda_precision_selection(make_model, monkeypatch, precision, expected_dtype):
+    cuda_probe = Mock(side_effect=AssertionError("Explicit precision must not query CUDA support"))
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", cuda_probe)
     wrapper = make_model(device="cuda:3", inference_precision=precision)
 
     assert wrapper._autocast_dtype == expected_dtype
-    assert bool(checked_devices) == (precision in {"auto", "bfloat16"})
-    assert not active_devices
+    cuda_probe.assert_not_called()
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
@@ -84,20 +63,27 @@ def test_default_precision_is_float32(make_model, monkeypatch, device):
     autocast.assert_not_called()
 
 
-def test_explicit_unsupported_cuda_bf16_is_rejected(make_model, monkeypatch):
-    monkeypatch.setattr(torch.cuda, "device", lambda device: nullcontext())
-    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+def test_explicit_cuda_bf16_defers_validation_to_autocast(make_model, monkeypatch):
+    cuda_probe = Mock(side_effect=AssertionError("Explicit precision must not query CUDA support"))
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", cuda_probe)
+    wrapper = make_model(device="cuda:0", inference_precision="bfloat16")
+    cuda_probe.assert_not_called()
 
-    with pytest.raises(ValueError, match="bfloat16 inference is not supported"):
-        make_model(device="cuda:0", inference_precision="bfloat16")
+    autocast = Mock(side_effect=RuntimeError("Current CUDA Device does not support bfloat16"))
+    monkeypatch.setattr(torch, "autocast", autocast)
+    with pytest.raises(RuntimeError, match="does not support bfloat16"):
+        wrapper._autocast_context()
+    autocast.assert_called_once_with(device_type="cuda", dtype=torch.bfloat16)
 
 
-def test_invalid_precision_is_rejected(make_model):
-    with pytest.raises(ValueError, match="Unsupported inference_precision float64"):
-        make_model(device="cpu", inference_precision="float64")
+@pytest.mark.parametrize("precision", ["auto", "float64"])
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_invalid_precision_is_rejected(make_model, precision, device):
+    with pytest.raises(ValueError, match=f"Unsupported inference_precision {precision}"):
+        make_model(device=device, inference_precision=precision)
 
 
-@pytest.mark.parametrize("precision", ["auto", "float32", "float16", "bfloat16"])
+@pytest.mark.parametrize("precision", ["float32", "float16", "bfloat16"])
 def test_cpu_does_not_add_autocast(make_model, monkeypatch, precision):
     cuda_probe = Mock(side_effect=AssertionError("CPU must not query CUDA support"))
     autocast = Mock(side_effect=AssertionError("CPU must not add autocast"))
@@ -110,8 +96,6 @@ def test_cpu_does_not_add_autocast(make_model, monkeypatch, precision):
 
     cuda_probe.assert_not_called()
     autocast.assert_not_called()
-    if precision == "auto":
-        assert wrapper._autocast_dtype is None
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
