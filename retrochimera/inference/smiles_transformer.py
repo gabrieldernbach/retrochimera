@@ -57,6 +57,8 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
             )
 
         precision_to_dtype = {
+            # Sentinel to skip local autocast, not autocast(dtype=None), which uses
+            # the device's default autocast dtype rather than float32.
             "float32": None,
             "float16": torch.float16,
             "bfloat16": torch.bfloat16,
