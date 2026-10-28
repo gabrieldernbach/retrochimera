@@ -2,7 +2,7 @@ import argparse
 import math
 from abc import abstractmethod
 from contextlib import nullcontext
-from typing import Any, Generic, Sequence, TypeVar
+from typing import Any, Generic, Literal, Sequence, TypeVar
 
 import torch
 from loky import get_reusable_executor
@@ -37,7 +37,7 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         probability_from_score_temperature: float = 3.0,
         filter_duplicate_augmentations: bool = True,
         canonicalization_processes: int = min(16, max(1, cpu_count() // 2)),
-        inference_precision: str = "float32",
+        inference_precision: Literal["float32", "float16", "bfloat16"] = "float32",
         **kwargs,
     ) -> None:
         """Initializes the SmilesTransformer model wrapper.
@@ -56,19 +56,9 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
                 "Class based on `AbstractSmilesTransformerModel` should extended `ReactionModel`"
             )
 
-        precision_to_dtype = {
-            # Sentinel to skip local autocast, not autocast(dtype=None), which uses
-            # the device's default autocast dtype rather than float32.
-            "float32": None,
-            "float16": torch.float16,
-            "bfloat16": torch.bfloat16,
-        }
-        if inference_precision not in precision_to_dtype:
-            raise ValueError(
-                f"Unsupported inference_precision {inference_precision}; "
-                f"expected one of {sorted(precision_to_dtype)}"
-            )
-        self._autocast_dtype = precision_to_dtype[inference_precision]
+        if inference_precision not in {"float32", "float16", "bfloat16"}:
+            raise ValueError(f"Unsupported inference_precision {inference_precision}")
+        self._autocast_dtype = getattr(torch, inference_precision)
 
         if canonicalization_processes <= 0:
             raise ValueError("canonicalization_processes must be positive")
@@ -104,12 +94,9 @@ class AbstractSmilesTransformerModel(Generic[InputType, ReactionType]):
         logger.info(f"Inference precision: {inference_precision}")
 
     def _autocast_context(self):
-        # float32 opts out of wrapper-managed autocast, without overriding caller contexts.
-        return (
-            torch.autocast(device_type="cuda", dtype=self._autocast_dtype)
-            if self._autocast_dtype is not None and self.device.startswith("cuda")
-            else nullcontext()
-        )
+        if self._autocast_dtype == torch.float32 or not self.device.startswith("cuda"):
+            return nullcontext()
+        return torch.autocast(device_type="cuda", dtype=self._autocast_dtype)
 
     def get_parameters(self):
         return self.model.parameters()
