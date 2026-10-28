@@ -50,6 +50,16 @@ For installation, there are two additional dependency groups: `dev` for running 
 
 If you want to train your own checkpoint, please follow the instructions in [`retrochimera/README.md`](retrochimera/README.md).
 
+### Transformer output canonicalization
+
+The backward and forward SMILES Transformer wrappers use a reusable process pool to
+canonicalize predictions. The `canonicalization_chunksize` model argument defaults to eight
+predictions per worker task and must be a positive integer. Use `canonicalization_chunksize=1`
+to restore unchunked scheduling, or tune it for your workload. Chunking preserves output order
+and scores without changing inference precision. Search concurrency and cross-target inference
+batching are separate controls in
+[Syntheseus's search CLI](https://github.com/microsoft/syntheseus/blob/main/docs/cli/search.md#concurrent-targets-and-batched-inference).
+
 ## Checkpoints for RetroChimera 1
 
 The main (and most powerful) checkpoint we release is trained on [Pistachio](https://figshare.com/ndownloader/files/59468882).
